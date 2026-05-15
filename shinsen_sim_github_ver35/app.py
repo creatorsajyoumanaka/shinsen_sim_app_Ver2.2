@@ -1086,13 +1086,13 @@ def apply_troop_skill(side_units, troop_type, log):
                     ally["crit_rate"] = ally.get("crit_rate", 0) + 0.35
                 log_line_safe(log, "🟡 会心率+35%")
                 
-           if name == "甲斐弓" and side_units:
-
+                            if name == "甲斐弓" and side_units:
                 for idx, ally in enumerate(side_units):
 
                     if idx == 0:
                         ally["active_rate_bonus"] = ally.get("active_rate_bonus", 0) + 0.12
                         log_line_safe(log, f"🎯 {ally['name']} 能動発動率+12%")
+
                     else:
                         ally["active_rate_bonus"] = ally.get("active_rate_bonus", 0) + 0.08
                         log_line_safe(log, f"🎯 {ally['name']} 能動発動率+8%")
