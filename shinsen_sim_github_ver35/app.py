@@ -77,6 +77,8 @@ TROOP_SKILL_REQUIRED_TYPE = {
 
 NON_DAMAGE_ASSAULT = {"罵詈雑言"}
 
+SPECIAL_SKILL_NAMES = {"地黄八幡", "千軍辟易"}
+
 OPENING_SKILL_TYPES = {"指揮", "受動", "兵種", "兵種戦法", "兵種進化"}
 
 ACTIVE_SKILL_TYPES = {"能動"}
@@ -644,8 +646,56 @@ def process_rest(u, log, cfg):
         heal(u, u, amount, log, cfg["heal_damage_rate"], "休養")
 
 def get_action_order(a,b): return sorted(living(a)+living(b), key=lambda u:(10000 if has_status(u,"先攻") else 0)+u["stats"].get("spd",0), reverse=True)
+def handle_special_active_skill(actor, allies, enemies, skill, log, cfg):
+    name = skill.get("name", "")
 
+    if name == "地黄八幡":
+        targets = living(enemies)
+
+        log.line(f"⚡ [{actor['name']}] 能動戦法『地黄八幡』発動")
+        log.line("⏳ 1ターン準備後として処理")
+
+        for target in targets:
+            dmg, kind = base_damage(actor, target, 1.74, "physical", cfg["damage_base"])
+            receive_damage(actor, target, dmg, "physical", kind, log, cfg, skill_name="地黄八幡")
+
+            if random.random() < 0.36:
+                add_status(target, "封撃", 1, source=actor, log=log)
+                add_status(target, "無策", 1, source=actor, log=log)
+                log.line(f"［{target['name']}］は［{actor['name']}］の『地黄八幡』により、封撃・無策状態になる（1T）")
+            else:
+                log.line(f"［{target['name']}］への封撃・無策付与は失敗")
+
+        return True
+
+    if name == "千軍辟易":
+        targets = living(enemies)
+
+        log.line(f"⚡ [{actor['name']}] 能動戦法『千軍辟易』発動")
+
+        for target in targets:
+            dmg, kind = base_damage(actor, target, 1.06, "physical", cfg["damage_base"])
+            receive_damage(actor, target, dmg, "physical", kind, log, cfg, skill_name="千軍辟易")
+
+            if has_status(target, "封撃") or has_status(target, "無策"):
+                if random.random() < 0.35:
+                    add_status(target, "威圧", 1, source=actor, log=log)
+                    log.line(f"［{target['name']}］は［{actor['name']}］の『千軍辟易』により、威圧状態になる（1T）")
+                else:
+                    log.line(f"［{target['name']}］への威圧付与は失敗")
+            else:
+                log.line(f"［{target['name']}］は封撃/無策状態ではないため、威圧判定なし")
+
+        return True
+
+    return False
+    
 def try_active_skill(actor, allies, enemies, skill, log, cfg):
+    name = skill.get("name", "")
+
+    if name in SPECIAL_SKILL_NAMES:
+        return handle_special_active_skill(actor, allies, enemies, skill, log, cfg)
+
     if skill.get("skill_type") != "能動": return False
     if has_status(actor, "無策"): log.event("🟣", actor["name"], f"無策により「{skill['name']}」不可"); return False
     proc = min(1.0, skill.get("proc",0.35) + actor.get("proc_bonus",0) + (actor.get("unique_proc_bonus",0) if skill.get("_is_unique") else 0))
