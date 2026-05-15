@@ -6,9 +6,9 @@ from pathlib import Path
 
 import streamlit as st
 
-st.set_page_config(page_title="信長真戦 編成シュミレーター Ver3.5", layout="wide")
+st.set_page_config(page_title="信長真戦 編成シュミレーター Ver3.9", layout="wide")
 
-APP_TITLE = "信長真戦 編成シュミレーター Ver3.5"
+APP_TITLE = "信長真戦 編成シュミレーター Ver3.9"
 CREATOR = "沙条愛歌"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
@@ -54,14 +54,152 @@ def parse_proc_from_text(text):
     m = re.search(r"発動確率[】\s]*(\d+(?:\.\d+)?)\s*%", text or "")
     return float(m.group(1)) / 100 if m else None
 
+
+# ============================================================
+# Ver3.9: 戦法分類・ログ・兵種戦法 安全補助
+# ============================================================
+
+TROOP_SKILL_TYPES = {"兵種", "兵種戦法", "兵種進化"}
+
+TROOP_SKILL_REQUIRED_TYPE = {
+    "大太刀": "足軽",
+    "大太刀力士隊": "足軽",
+    "三河弓": "弓兵",
+    "三河弓兵隊": "弓兵",
+    "赤備え隊": "騎兵",
+    "甲斐赤備": "騎兵",
+    "甲斐弓": "弓兵",
+    "母衣武者": "騎兵",
+    "薩摩鉄砲兵": "鉄砲",
+    "鉄砲僧兵": "鉄砲",
+    "僧兵": "足軽",
+}
+
+NON_DAMAGE_ASSAULT = {"罵詈雑言"}
+
+OPENING_SKILL_TYPES = {"指揮", "受動", "兵種", "兵種戦法", "兵種進化"}
+
+ACTIVE_SKILL_TYPES = {"能動"}
+
+ASSAULT_SKILL_TYPES = {"突撃"}
+
+def normalize_skill_type(skill):
+    """Excel/JSONの表記揺れを吸収して、戦法タイプを返す。"""
+    if not isinstance(skill, dict):
+        return "能動"
+    raw_type = skill.get("skill_type") or skill.get("type") or skill.get("戦法タイプ") or ""
+    text = " ".join(str(skill.get(k, "")) for k in ("effect", "detail", "description", "戦法詳細", "text"))
+    joined = f"{raw_type} {text}"
+
+    if "【戦法詳細】 兵種" in joined or raw_type in TROOP_SKILL_TYPES:
+        return "兵種"
+    if "【戦法詳細】 指揮" in joined or raw_type == "指揮":
+        return "指揮"
+    if "【戦法詳細】 受動" in joined or raw_type == "受動":
+        return "受動"
+    if "【戦法詳細】 突撃" in joined or raw_type == "突撃":
+        return "突撃"
+    if "【戦法詳細】 能動" in joined or raw_type == "能動":
+        return "能動"
+
+    # 重要：本文中の「突撃戦法」は効果説明の場合があるので、先頭の詳細表記がない限り優先しない
+    if joined.strip().startswith("兵種"):
+        return "兵種"
+    if joined.strip().startswith("指揮"):
+        return "指揮"
+    if joined.strip().startswith("受動"):
+        return "受動"
+    if joined.strip().startswith("突撃"):
+        return "突撃"
+    if joined.strip().startswith("能動"):
+        return "能動"
+    return "能動"
+
+def skill_name(skill):
+    if isinstance(skill, dict):
+        return skill.get("name") or skill.get("戦法名") or skill.get("skill_name") or "不明戦法"
+    return str(skill)
+
+def skill_proc(skill, default=1.0):
+    if not isinstance(skill, dict):
+        return default
+    val = skill.get("proc", skill.get("rate", skill.get("発動確率", default)))
+    try:
+        if isinstance(val, str):
+            val = val.replace("%", "").replace("％", "").strip()
+            num = float(val)
+            return num / 100 if num > 1 else num
+        num = float(val)
+        return num / 100 if num > 1 else num
+    except Exception:
+        return default
+
+def log_line_safe(log, text):
+    if hasattr(log, "line"):
+        log.line(text)
+    elif hasattr(log, "event"):
+        log.event("", "", text)
+
+def log_battle_header(log, title):
+    if hasattr(log, "h"):
+        log.h(title)
+    else:
+        log_line_safe(log, f"━━━━━━━━━━━━\n{title}\n━━━━━━━━━━━━")
+
+def true_battle_damage_line(target, source, skill, damage):
+    remain = target.get("troops", target.get("兵力", 0)) if isinstance(target, dict) else 0
+    tn = target.get("name", "対象") if isinstance(target, dict) else str(target)
+    sn = source.get("name", "発動者") if isinstance(source, dict) else str(source)
+    return f"［{tn}］は［{sn}］の「{skill}」により、兵力{damage}（残兵{remain}）損失"
+
+def true_battle_heal_line(target, source, skill, amount):
+    remain = target.get("troops", target.get("兵力", 0)) if isinstance(target, dict) else 0
+    tn = target.get("name", "対象") if isinstance(target, dict) else str(target)
+    return f"［{tn}］は「{skill}」により、兵力{amount}（残兵{remain}）回復"
+
+def true_battle_status_line(target, source, skill, status, turns=1):
+    tn = target.get("name", "対象") if isinstance(target, dict) else str(target)
+    sn = source.get("name", "発動者") if isinstance(source, dict) else str(source)
+    return f"［{tn}］は［{sn}］の「{skill}」により、{status}状態になる（{turns}T）"
+
+def list_unit_skills_debug(units, log, enabled=False):
+    """戦法が出てこない時の確認用。通常はFalse。"""
+    if not enabled:
+        return
+    log_battle_header(log, "DEBUG：所持戦法確認")
+    for unit in units:
+        names = []
+        for s in unit.get("skills", []):
+            names.append(f"{skill_name(s)} / {normalize_skill_type(s)} / {skill_proc(s):.0%}")
+        log_line_safe(log, f"【{unit.get('name','不明')}】" + " / ".join(names))
+
+
 def infer_skill_type(text):
     text = text or ""
-    if "突撃" in text:
-        return "突撃"
-    if "指揮" in text:
+
+    if "【戦法詳細】 兵種" in text:
+        return "兵種"
+    if "【戦法詳細】 指揮" in text:
         return "指揮"
-    if "受動" in text:
+    if "【戦法詳細】 受動" in text:
         return "受動"
+    if "【戦法詳細】 突撃" in text:
+        return "突撃"
+    if "【戦法詳細】 能動" in text:
+        return "能動"
+
+    head = text.strip()[:40]
+    if head.startswith("兵種"):
+        return "兵種"
+    if head.startswith("指揮"):
+        return "指揮"
+    if head.startswith("受動"):
+        return "受動"
+    if head.startswith("突撃"):
+        return "突撃"
+    if head.startswith("能動"):
+        return "能動"
+
     return "能動"
 
 def infer_target_info(effect_text, explicit_target=""):
@@ -173,23 +311,52 @@ def get_unique_skill(g):
 def format_stats(stats):
     return " / ".join(f"{stat_label(k)} {v}" for k, v in stats.items())
 
+
 class BattleLogger:
     def __init__(self):
         self.sections = []
         self.current = None
+
     def h(self, text):
         self.current = {"title": text, "lines": []}
         self.sections.append(self.current)
-    def line(self, text):
+
+    def line(self, text=""):
         if self.current is None:
-            self.h("開戦")
-        self.current["lines"].append(text)
-    def info(self, text): self.line(f"・{text}")
-    def event(self, icon, actor, text): self.line(f"{icon} [{actor}] {text}")
-    def damage(self, actor, target, value, kind="兵刃"): self.line(f"🔴 [{actor}] → [{target}] {value} {kind}ダメージ")
-    def heal(self, actor, target, value): self.line(f"🟢 [{actor}] → [{target}] {value} 回復")
-    def status(self, actor, target, status, turns): self.line(f"🟣 [{actor}] → [{target}] {status}付与（{turns}T）")
-    def buff(self, actor, target, text): self.line(f"🔵 [{actor}] → [{target}] {text}")
+            self.h("合戦開始")
+        self.current["lines"].append(str(text))
+
+    def info(self, text):
+        self.line(f"・{text}")
+
+    def unit(self, name):
+        self.line(f"【{name}】")
+
+    def event(self, icon, actor, text):
+        self.line(f"{icon}［{actor}］{text}")
+
+    def damage_detail(self, target, source, skill, value):
+        self.line(f"🔴［{target['name']}］は［{source['name']}］の『{skill}』により、兵力{value}（残兵{target['troops']}）損失")
+
+    def heal_detail(self, target, source, skill, value):
+        self.line(f"🟢［{target['name']}］は［{source['name']}］の『{skill}』により、兵力{value}（残兵{target['troops']}）回復")
+
+    def status_detail(self, target, source, skill, status, turns):
+        self.line(f"🟣［{target['name']}］は［{source['name']}］の『{skill}』により、{status}状態になる（{turns}T）")
+
+    def damage(self, actor, target, value, kind="兵刃"):
+        # 互換用。なるべく receive_damage の詳細ログを使う。
+        self.line(f"🔴［{target}］は［{actor}］の『{kind}』により、兵力{value}損失")
+
+    def heal(self, actor, target, value):
+        self.line(f"🟢［{target}］は［{actor}］により、兵力{value}回復")
+
+    def status(self, actor, target, status, turns):
+        self.line(f"🟣［{target}］は［{actor}］により、{status}状態になる（{turns}T）")
+
+    def buff(self, actor, target, text):
+        self.line(f"🔵［{target}］は［{actor}］により、{text}")
+
     def text(self):
         out = []
         for sec in self.sections:
@@ -264,34 +431,201 @@ def apply_crit(actor, dmg, dtype, log, crit_base_bonus=0.50):
         return new
     return dmg
 
+
 def heal(actor, target, amount, log, heal_rate, reason="回復"):
     if has_status(target, "回復不可"):
-        log.event("🚫", target["name"], f"回復不可により{reason}失敗")
+        log.event("🚫", target["name"], f"回復不可により『{reason}』失敗")
         return 0
     amount = int(amount * heal_rate)
     before = target["troops"]
     target["troops"] = min(target["max_troops"], target["troops"] + max(0, amount))
     healed = target["troops"] - before
-    if healed > 0: log.heal(actor["name"], target["name"], healed)
+    if healed > 0:
+        log.heal_detail(target, actor, reason, healed)
     return healed
 
-def receive_damage(actor, target, dmg, dtype, kind, log, cfg):
-    if target["troops"] <= 0: return 0
+# ============================================================
+# 兵種戦法：開戦時適用＋条件トリガー
+# ============================================================
+
+
+# ダメージを伴わない突撃/反応系戦法。発動ログは出しても自動ダメージは出さない。
+NON_DAMAGE_ASSAULT_SKILLS = {
+    "罵詈雑言",
+    "機に乗ず",
+}
+
+TROOP_SKILL_TYPES = {"兵種", "兵種戦法", "兵種進化"}
+
+TROOP_SKILL_REQUIRED_TYPE = {
+    "母衣武者": "騎兵",
+    "甲斐弓騎兵": "弓兵",
+    "甲斐弓": "弓兵",
+    "赤備え隊": "騎兵",
+    "赤備": "騎兵",
+    "三河弓兵隊": "弓兵",
+    "三河弓": "弓兵",
+    "薩摩鉄砲兵": "鉄砲",
+    "鉄砲僧兵": "鉄砲",
+    "大太刀力士隊": "足軽",
+    "大太刀": "足軽",
+    "僧兵": "足軽",
+}
+
+def is_troop_skill(skill):
+    return skill.get("skill_type") in TROOP_SKILL_TYPES or "【戦法詳細】 兵種" in skill.get("effect", "")
+
+def required_troop_type(skill):
+    name = skill.get("name", "")
+    if name in TROOP_SKILL_REQUIRED_TYPE:
+        return TROOP_SKILL_REQUIRED_TYPE[name]
+    text = skill.get("effect", "")
+    for tp in ["騎兵", "弓兵", "足軽", "鉄砲"]:
+        if f"{tp}が" in text or f"【適性兵種】 {tp}" in text:
+            return tp
+    return None
+
+
+def apply_troop_skills(side_units, troop_type, log, label):
+    """兵種戦法は毎ターン発動判定しない。合戦開始で兵種一致時だけ効果フラグを付与する。"""
+    applied = set()
+    for owner in side_units:
+        for sk in owner.get("skills", []):
+            if not is_troop_skill(sk):
+                continue
+            name = sk.get("name", "")
+            req = required_troop_type(sk)
+            if req and req != troop_type:
+                log.event("🚫", owner["name"], f"兵種戦法『{name}』無効：必要兵種 {req} / 現在 {troop_type}")
+                continue
+            if (owner["name"], name) in applied:
+                continue
+            applied.add((owner["name"], name))
+
+            log.unit(owner["name"])
+            log.line(f"🛡️ 兵種戦法『{name}』発動")
+
+            if name in {"大太刀", "大太刀力士隊"}:
+                for u in side_units:
+                    u["otachi_counter_rate"] = max(u.get("otachi_counter_rate", 0), 0.30)
+                    u["otachi_counter_damage_rate"] = max(u.get("otachi_counter_damage_rate", 0), 1.00)
+                    u["normal_assault_reduce_until_turn"] = max(u.get("normal_assault_reduce_until_turn", 0), 2)
+                    u["normal_assault_reduce_rate"] = max(u.get("normal_assault_reduce_rate", 0), 0.18)
+                log.line("↩️ 反撃 効果付与済み")
+                log.line("🛡️ 通常攻撃・突撃被ダメージ低下 効果付与済み")
+
+            elif name in {"三河弓", "三河弓兵隊"}:
+                for u in side_units:
+                    u["stats"]["lea"] = u["stats"].get("lea", 0) + 20
+                    u["mikawa_heal_until_turn"] = max(u.get("mikawa_heal_until_turn", 0), 3)
+                    u["mikawa_heal_rate"] = max(u.get("mikawa_heal_rate", 0), 0.35)
+                    u["mikawa_heal_power"] = max(u.get("mikawa_heal_power", 0), 0.65)
+                log.line("⬆️ 統率+20")
+                log.line("💚 回生 効果付与済み")
+
+            elif name in {"赤備え", "赤備え隊", "甲斐赤備"}:
+                for u in side_units:
+                    u["crit_rate"] += 0.35
+                log.line("🟡 会心率+35% 効果付与済み")
+
+            elif name in {"甲斐弓", "甲斐弓騎兵"}:
+                if side_units:
+                    side_units[0]["proc_bonus"] += 0.08
+                log.line("🎯 配置1番目の能動戦法発動率+8%")
+
+            elif name == "母衣武者":
+                for u in side_units:
+                    u["stats"]["spd"] = u["stats"].get("spd", 0) + 20
+                    u["horo_musha"] = True
+                log.line("🐎 自軍全体 速度+20")
+
+            elif name == "薩摩鉄砲兵":
+                for u in side_units:
+                    u["satsuma_gun"] = True
+                    u["strategy_damage_bonus"] += 0.40
+                log.line("🔫 計略与ダメージ+40% 効果付与済み")
+
+            elif name == "鉄砲僧兵":
+                for u in side_units:
+                    u["stats"]["lea"] += 12
+                    u["stats"]["int"] += 12
+                    u["teppo_sohei_rest"] = True
+                log.line("🙏 統率+12 / 知略+12 / 休養予約")
+
+            elif name == "僧兵":
+                for u in side_units:
+                    u["damage_reduce"] += 0.20
+                log.line("🛡️ 兵刃被ダメージ20%低下 効果付与済み")
+
+def process_troop_turn_effects(side_units, troop_type, turn, log, cfg, label):
+    # 鉄砲僧兵：1/2/5/6ターン目に休養付与
+    if turn in {1, 2, 5, 6}:
+        for u in side_units:
+            if u.get("teppo_sohei_rest"):
+                add_status(u, "休養", 1, value=0.44, source=u, log=log)
+                log.event("🙏", u["name"], "鉄砲僧兵：休養付与（1T）")
+
+
+def receive_damage(actor, target, dmg, dtype, kind, log, cfg, skill_name=None):
+    if target["troops"] <= 0:
+        return 0
+    turn = cfg.get("_turn", 0)
+    skill_name = skill_name or cfg.get("_skill_name") or kind or "通常攻撃"
+
+    # 兵種戦法：大太刀などの通常/突撃被ダメ軽減
+    if dtype in {"normal", "assault"} and turn <= target.get("normal_assault_reduce_until_turn", 0):
+        reduce_rate = target.get("normal_assault_reduce_rate", 0)
+        if reduce_rate > 0:
+            before_dmg = int(dmg)
+            dmg = int(dmg * (1 - reduce_rate))
+            log.event("🛡️", target["name"], f"兵種戦法軽減：{before_dmg} → {dmg}")
+
     if has_status(target, "鉄壁") and not has_status(actor, "心中"):
-        remove_status(target, "鉄壁"); log.event("🛡️", target["name"], "鉄壁でダメージ無効"); return 0
+        remove_status(target, "鉄壁")
+        log.event("🛡️", target["name"], "鉄壁でダメージ無効")
+        return 0
+
     if has_status(target, "回避") and not has_status(actor, "心中"):
         ev = target["statuses"]["回避"].get("value") or 0.35
-        if random.random() < ev: log.event("💨", target["name"], f"回避成功（{int(ev*100)}%）"); return 0
+        if random.random() < ev:
+            log.event("💨", target["name"], f"回避成功（{int(ev*100)}%）")
+            return 0
+
     if has_status(actor, "疲弊"):
-        log.event("🟣", actor["name"], "疲弊により与ダメージ無効"); return 0
+        log.event("🟣", actor["name"], "疲弊により与ダメージ無効")
+        return 0
+
     loss = min(target["troops"], max(0, int(dmg)))
     target["troops"] -= loss
-    if target["troops"] <= 0: target["alive"] = False
-    log.damage(actor["name"], target["name"], loss, kind)
+    if target["troops"] <= 0:
+        target["alive"] = False
+
+    log.damage_detail(target, actor, skill_name, loss)
+
     if dtype == "physical" and has_status(actor, "離反"):
         heal(actor, actor, int(loss * (actor["statuses"]["離反"].get("value") or 0.15)), log, cfg["heal_damage_rate"], "離反")
     if dtype == "strategy" and has_status(actor, "心攻"):
         heal(actor, actor, int(loss * (actor["statuses"]["心攻"].get("value") or 0.15)), log, cfg["heal_damage_rate"], "心攻")
+
+    # 三河弓：被ダメ時回復（3Tまで）
+    if loss > 0 and turn <= target.get("mikawa_heal_until_turn", 0) and random.random() < target.get("mikawa_heal_rate", 0):
+        amount = int(cfg["heal_base"] * target.get("mikawa_heal_power", 0.65) * max(0.6, target["stats"].get("lea", 100) / 150))
+        heal(target, target, amount, log, cfg["heal_damage_rate"], "三河弓兵隊")
+
+    # 大太刀：通常攻撃被弾時反撃。反撃ループ防止。
+    if loss > 0 and dtype == "normal" and not cfg.get("_countering", False):
+        rate = target.get("otachi_counter_rate", 0)
+        if rate > 0 and random.random() < rate and actor.get("troops", 0) > 0:
+            cfg["_countering"] = True
+            counter_rate = target.get("otachi_counter_damage_rate", 1.0)
+            cdmg, ckind = base_damage(target, actor, counter_rate, "physical", cfg["normal_damage_base"])
+            log.event("↩️", target["name"], f"大太刀反撃：{actor['name']}へ反撃")
+            receive_damage(target, actor, cdmg, "counter", "反撃", log, cfg, skill_name="大太刀反撃")
+            if target.get("name") == "真柄直隆" and random.random() < 0.25 and actor.get("troops", 0) > 0:
+                edmg, _ = base_damage(target, actor, 1.20, "physical", cfg["damage_base"])
+                log.event("⚔️", target["name"], "真柄直隆：大太刀追加兵刃")
+                receive_damage(target, actor, edmg, "counter", "追加兵刃", log, cfg, skill_name="大太刀追加兵刃")
+            cfg["_countering"] = False
     return loss
 
 def process_dot(u, log, cfg):
@@ -325,7 +659,7 @@ def try_active_skill(actor, allies, enemies, skill, log, cfg):
         for t in targets:
             dmg, kind = base_damage(actor, t, rate, sim.get("damage_type","physical"), cfg["damage_base"])
             dmg = apply_crit(actor, dmg, sim.get("damage_type","physical"), log, cfg["crit_base_bonus"])
-            receive_damage(actor, t, dmg, sim.get("damage_type","physical"), kind, log, cfg)
+            receive_damage(actor, t, dmg, sim.get("damage_type","physical"), kind, log, cfg, skill_name=skill["name"])
     if sim.get("heal_rates"):
         heal_targets = targets if sim.get("target",{}).get("side") == "ally" else random.sample(living(allies), min(len(living(allies)), max(1,len(targets))))
         for rate in sim.get("heal_rates", []):
@@ -347,52 +681,97 @@ def try_active_skill(actor, allies, enemies, skill, log, cfg):
                 if add_status(t, s, sim.get("duration",1), value, rate, actor, log): log.buff(actor["name"], t["name"], f"{s}付与（{sim.get('duration',1)}T）")
         elif s in DOT_STATUSES | CONTROL_STATUSES | {"回復不可"}:
             for t in targets:
-                if add_status(t, s, sim.get("duration",1), source=actor, log=log): log.status(actor["name"], t["name"], s, sim.get("duration",1))
+                if add_status(t, s, sim.get("duration",1), source=actor, log=log): log.status_detail(t, actor, skill["name"], s, sim.get("duration",1))
     return True
 
+
 def normal_attack(actor, allies, enemies, log, cfg):
-    if has_status(actor,"封撃"): log.event("🟣", actor["name"], "封撃により通常攻撃不可"); return
+    if has_status(actor,"封撃"):
+        log.event("🟣", actor["name"], "封撃により通常攻撃不可")
+        return
     times = 2 if has_status(actor,"連撃") else 1
+    actor["_assault_checked_names"] = set()
     for _ in range(times):
         pool = [u for u in living(allies+enemies) if u is not actor] if has_status(actor,"混乱") else None
         target = random.choice(pool) if pool else (choose_targets(actor, allies, enemies, {"side":"enemy","scope":"single","count_min":1,"count_max":1}) or [None])[0]
-        if not target: return
-        if pool: log.event("🌀", actor["name"], "混乱により対象ランダム化")
+        if not target:
+            return
+        if pool:
+            log.event("🌀", actor["name"], "混乱により対象ランダム化")
         dmg, kind = base_damage(actor, target, 1.0, "physical", cfg["normal_damage_base"])
         dmg = apply_crit(actor, dmg, "physical", log, cfg["crit_base_bonus"])
-        receive_damage(actor, target, dmg, "physical", kind, log, cfg)
+        receive_damage(actor, target, dmg, "normal", kind, log, cfg, skill_name="通常攻撃")
+        if actor.get("horo_musha") and target and target.get("troops", 0) > 0:
+            target["damage_taken_bonus"] += 0.03
+            log.event("🐎", actor["name"], f"母衣武者：{target['name']}の被ダメージ+3%")
         for sk in actor["skills"]:
+            if is_troop_skill(sk):
+                continue
             if sk.get("skill_type") == "突撃":
-                proc = min(1.0, sk.get("proc",0.35)+actor.get("proc_bonus",0)); log.event("🎲", actor["name"], f"突撃「{sk['name']}」判定 {int(proc*100)}%")
+                # 1回の行動中に同名突撃を何度も再判定しない。古今独歩などの多重判定対策。
+                if sk.get("name") in actor["_assault_checked_names"]:
+                    continue
+                actor["_assault_checked_names"].add(sk.get("name"))
+                proc = min(1.0, sk.get("proc",0.35)+actor.get("proc_bonus",0))
+                log.event("🎲", actor["name"], f"突撃『{sk['name']}』判定 {int(proc*100)}%")
                 if random.random() <= proc:
-                    log.event("⚡", actor["name"], f"突撃戦法「{sk['name']}」発動")
-                    sim = sk.get("sim",{}); dtype = sim.get("damage_type","physical")
-                    for rate in sim.get("damage_rates",[]) or [1.5]:
-                        sdmg, skind = base_damage(actor, target, rate, dtype, cfg["damage_base"])
-                        sdmg = apply_crit(actor, sdmg, dtype, log, cfg["crit_base_bonus"])
-                        receive_damage(actor, target, sdmg, dtype, skind, log, cfg)
+                    log.event("⚡", actor["name"], f"突撃戦法『{sk['name']}』発動")
+                    sim = sk.get("sim",{})
+                    dtype = sim.get("damage_type","physical")
+                    does_damage = sk.get("does_damage", None)
+                    if does_damage is None:
+                        effect_text = sk.get("effect", "")
+                        does_damage = ("ダメージ" in effect_text) and ("被ダメージ" not in effect_text) and ("ダメージが低下" not in effect_text)
+                    if sk.get("name") in NON_DAMAGE_ASSAULT_SKILLS:
+                        does_damage = False
+                    if does_damage:
+                        for rate in sim.get("damage_rates",[]) or [1.5]:
+                            sdmg, skind = base_damage(actor, target, rate, dtype, cfg["damage_base"])
+                            sdmg = apply_crit(actor, sdmg, dtype, log, cfg["crit_base_bonus"])
+                            receive_damage(actor, target, sdmg, "assault" if dtype == "physical" else dtype, skind, log, cfg, skill_name=sk["name"])
+                    else:
+                        log.event("🟣", actor["name"], f"『{sk['name']}』は効果付与型のため自動ダメージなし")
 
+apply_troop_skill(a, meta.get("a_troop_type", "騎兵"), log)
+apply_troop_skill(b, meta.get("b_troop_type", "騎兵"), log)
 def apply_passive_and_command_skills(units, log):
-    log.h("開戦前処理")
     for u in units:
         for sk in u["skills"]:
-            if sk.get("skill_type") not in {"指揮", "受動"}: continue
-            name, text = sk.get("name",""), sk.get("effect","")
-            log.event("📘", u["name"], f"{sk.get('skill_type')}戦法「{name}」適用")
-            if "連撃" in text: add_status(u,"連撃",4,source=u,log=log); log.buff(u["name"],u["name"],"連撃獲得")
+            if sk.get("skill_type") not in {"指揮", "受動"}:
+                continue
+            name, text = sk.get("name", ""), sk.get("effect", "")
+            log.unit(u["name"])
+            log.line(f"⚡ {sk.get('skill_type')}戦法『{name}』発動")
+            if "連撃" in text:
+                add_status(u, "連撃", 4, source=u, log=log); log.line("⚔️ 連撃 効果付与済み")
             if "会心" in text:
-                m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*の会心", text); val = float(m.group(1))/100 if m else 0.20; u["crit_rate"] += val; log.buff(u["name"],u["name"],f"会心率 +{int(val*100)}%")
+                m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*の会心", text)
+                val = float(m.group(1))/100 if m else 0.20
+                u["crit_rate"] += val
+                log.line(f"🟡 会心（予備）効果付与済み（{int(val*100)}%）")
             if "奇策" in text:
-                m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*の奇策", text); val = float(m.group(1))/100 if m else 0.05; u["strategy_crit_rate"] += val; log.buff(u["name"],u["name"],f"奇策率 +{int(val*100)}%")
-            if "会心ダメージ" in text: u["crit_damage_bonus"] += 0.30; log.buff(u["name"],u["name"],"会心ダメージ率 +30%")
-            if "奇策ダメージ" in text: u["strategy_crit_damage_bonus"] += 0.30; log.buff(u["name"],u["name"],"奇策ダメージ率 +30%")
-            if "回避" in text: add_status(u,"回避",2,value=0.35,source=u,log=log); log.buff(u["name"],u["name"],"回避獲得")
-            if "洞察" in text: add_status(u,"洞察",2,source=u,log=log); log.buff(u["name"],u["name"],"洞察獲得")
-            if "休養" in text: add_status(u,"休養",3,value=0.66,source=u,log=log); log.buff(u["name"],u["name"],"休養獲得")
-            if "被ダメージ" in text and "低下" in text: u["damage_reduce"] += 0.12; log.buff(u["name"],u["name"],"被ダメージ低下（Preview +12%）")
-            if "与ダメージ" in text and "上昇" in text: u["physical_damage_bonus"] += 0.10; u["strategy_damage_bonus"] += 0.10; log.buff(u["name"],u["name"],"与ダメージ上昇（Preview +10%）")
-            if name == "同気連枝": u["_ohatsu"] = True; log.buff(u["name"],u["name"],"同気連枝：被弾時回復支援")
-            if name == "風姿綽約": u["_oe"] = True; u["_oe_layers"] = 0; u["_oe_applied"] = set(); log.buff(u["name"],u["name"],"風姿綽約：武勇4%累積")
+                m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*の奇策", text)
+                val = float(m.group(1))/100 if m else 0.05
+                u["strategy_crit_rate"] += val
+                log.line(f"🟣 奇策（予備）効果付与済み（{int(val*100)}%）")
+            if "会心ダメージ" in text:
+                u["crit_damage_bonus"] += 0.30; log.line("🟡 会心ダメージ率+30% 効果付与済み")
+            if "奇策ダメージ" in text:
+                u["strategy_crit_damage_bonus"] += 0.30; log.line("🟣 奇策ダメージ率+30% 効果付与済み")
+            if "回避" in text:
+                add_status(u, "回避", 2, value=0.35, source=u, log=log); log.line("💨 回避 効果付与済み")
+            if "洞察" in text:
+                add_status(u, "洞察", 2, source=u, log=log); log.line("🛡️ 洞察 効果付与済み")
+            if "休養" in text:
+                add_status(u, "休養", 3, value=0.66, source=u, log=log); log.line("💚 休養 効果付与済み")
+            if "被ダメージ" in text and "低下" in text:
+                u["damage_reduce"] += 0.12; log.line("🛡️ 被ダメージ低下 効果付与済み")
+            if "与ダメージ" in text and "上昇" in text:
+                u["physical_damage_bonus"] += 0.10; u["strategy_damage_bonus"] += 0.10; log.line("⬆️ 与ダメージ上昇 効果付与済み")
+            if name == "同気連枝":
+                u["_ohatsu"] = True; log.line("🌸 同気連枝：被弾時回復支援 効果付与済み")
+            if name == "風姿綽約":
+                u["_oe"] = True; u["_oe_layers"] = 0; u["_oe_applied"] = set(); log.line("🌺 風姿綽約：武勇累積 効果付与済み")
 
 def special_turn_start(u, allies, enemies, log):
     if u.get("_ohatsu") and random.random() < 0.48:
@@ -608,7 +987,7 @@ def process_gungaku_lv5(side, enemy, troop_type, level, turn, log, cfg, label):
         for a in attackers:
             for t in targets:
                 dmg, kind = base_damage(a, t, 0.60, "physical", cfg["normal_damage_base"])
-                receive_damage(a, t, dmg, "physical", kind, log, cfg["heal_damage_rate"], cfg["crit_base_bonus"])
+                receive_damage(a, t, dmg, "physical", kind, log, cfg, skill_name="軍学Lv5 斉射")
         log.event("🏹", f"{label}軍", "軍学Lv5 斉射 発動")
     elif troop_type == "足軽" and turn == 5:
         for u in random.sample(living(side), min(2, len(living(side)))):
@@ -621,22 +1000,70 @@ def process_gungaku_lv5(side, enemy, troop_type, level, turn, log, cfg, label):
     elif troop_type == "騎兵" and turn == 1:
         log.event("🐎", f"{label}軍", "軍学Lv5 疾行：移送速度効果のため戦闘内効果なし")
 
+
+def apply_troop_skill(side_units, troop_type, log):
+    for unit in side_units:
+        for skill in unit.get("skills", []):
+            stype = normalize_skill_type(skill)
+            name = skill_name(skill)
+            if stype not in TROOP_SKILL_TYPES:
+                continue
+
+            required = TROOP_SKILL_REQUIRED_TYPE.get(name)
+            if required and required != troop_type:
+                log_line_safe(log, f"［{unit.get('name','不明')}］の兵種戦法「{name}」は必要兵種{required}のため発動しません")
+                continue
+
+            log_line_safe(log, f"【{unit.get('name','不明')}】")
+            log_line_safe(log, f"🛡️ 兵種戦法「{name}」発動")
+
+            if name in {"大太刀", "大太刀力士隊"}:
+                for ally in side_units:
+                    ally["otachi_counter_rate"] = 0.30
+                    ally["otachi_counter_damage_rate"] = 1.00
+                    ally["normal_assault_reduce_until_turn"] = 2
+                    ally["normal_assault_reduce_rate"] = 0.18
+                log_line_safe(log, "↩️ 反撃 効果付与済み")
+                log_line_safe(log, "🛡️ 通常攻撃・突撃被ダメ軽減 効果付与済み")
+
+            if name in {"三河弓", "三河弓兵隊"}:
+                for ally in side_units:
+                    ally["mikawa_heal"] = True
+                    ally["stats"]["lea"] = ally.get("stats", {}).get("lea", 0) + 20
+                log_line_safe(log, "⬆️ 統率+20")
+                log_line_safe(log, "💚 回生 効果付与済み")
+
+            if name in {"赤備え隊", "甲斐赤備"}:
+                for ally in side_units:
+                    ally["crit_rate"] = ally.get("crit_rate", 0) + 0.35
+                log_line_safe(log, "🟡 会心率+35%")
+
+            if name == "甲斐弓" and side_units:
+                side_units[0]["active_rate_bonus"] = side_units[0].get("active_rate_bonus", 0) + 0.08
+                log_line_safe(log, "🎯 先頭武将 能動発動率+8%")
+
 def simulate_battle(a_units,b_units,max_turns=8,seed=None,cfg=None,meta=None):
     if seed is not None: random.seed(seed)
     cfg = cfg or {}; meta = meta or {}; log = BattleLogger(); a = deepcopy(a_units); b = deepcopy(b_units)
     for u in a: u["side"] = "A"
     for u in b: u["side"] = "B"
-    log.h("開戦前バフ")
+    log.h("合戦開始")
     apply_limit_break_effects(a, meta.get("a_troop_type", "騎兵"), log, "A")
     apply_limit_break_effects(b, meta.get("b_troop_type", "騎兵"), log, "B")
     apply_kamon_buffs(a, meta.get("a_kamon_level", 0), log, "A")
     apply_kamon_buffs(b, meta.get("b_kamon_level", 0), log, "B")
     apply_gungaku(a, meta.get("a_troop_type", "騎兵"), meta.get("a_gungaku_level", 0), log, "A")
     apply_gungaku(b, meta.get("b_troop_type", "騎兵"), meta.get("b_gungaku_level", 0), log, "B")
+    apply_troop_skills(a, meta.get("a_troop_type", "騎兵"), log, "A")
+    apply_troop_skills(b, meta.get("b_troop_type", "騎兵"), log, "B")
+    list_unit_skills_debug(a+b, log, meta.get('debug_show_skills', False))
     apply_passive_and_command_skills(a+b, log)
     for turn in range(1, max_turns+1):
         if total_troops(a)<=0 or total_troops(b)<=0: break
-        log.h(f"ターン{turn}")
+        log.h(f"{turn}ターン")
+        cfg["_turn"] = turn
+        process_troop_turn_effects(a, meta.get("a_troop_type", "騎兵"), turn, log, cfg, "A")
+        process_troop_turn_effects(b, meta.get("b_troop_type", "騎兵"), turn, log, cfg, "B")
         process_gungaku_lv5(a, b, meta.get("a_troop_type", "騎兵"), meta.get("a_gungaku_level", 0), turn, log, cfg, "A")
         process_gungaku_lv5(b, a, meta.get("b_troop_type", "騎兵"), meta.get("b_gungaku_level", 0), turn, log, cfg, "B")
         for u in get_action_order(a,b):
@@ -649,6 +1076,8 @@ def simulate_battle(a_units,b_units,max_turns=8,seed=None,cfg=None,meta=None):
             if has_status(actor,"威圧"): log.event("🟣",actor["name"],"威圧により行動不能"); continue
             if has_status(actor,"麻痺") and random.random()<0.30: log.event("⚡",actor["name"],"麻痺により行動不能"); continue
             for sk in actor["skills"]:
+                if is_troop_skill(sk):
+                    continue
                 if sk.get("skill_type") == "能動": try_active_skill(actor,allies,enemies,sk,log,cfg)
             normal_attack(actor,allies,enemies,log,cfg)
             if total_troops(a)<=0 or total_troops(b)<=0: break
@@ -744,6 +1173,7 @@ def main():
     with st.sidebar:
         st.header("計算設定")
         max_turns = st.selectbox("最大ターン", [4,6,8,10], index=2); seed_text = st.text_input("乱数Seed（空欄可）", value="")
+        debug_show_skills = st.checkbox("DEBUG：所持戦法確認", value=False)
         st.divider(); st.subheader("家門バフ・軍学")
         a_troop_type = st.selectbox("A軍 兵種", ["騎兵", "弓兵", "足軽", "鉄砲"], index=0)
         b_troop_type = st.selectbox("B軍 兵種", ["騎兵", "弓兵", "足軽", "鉄砲"], index=0)
@@ -774,6 +1204,7 @@ def main():
             "b_gungaku_level": b_gungaku_level,
             "a_kamon_level": a_kamon_level,
             "b_kamon_level": b_kamon_level,
+            "debug_show_skills": debug_show_skills,
         }
         log_text, fa, fb = simulate_battle(a_units,b_units,max_turns=max_turns,seed=seed,cfg=cfg,meta=meta)
         if fa>fb: st.success(f"A軍勝利：A軍 {fa} / B軍 {fb}")
