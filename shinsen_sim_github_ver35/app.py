@@ -1087,8 +1087,15 @@ def apply_troop_skill(side_units, troop_type, log):
                 log_line_safe(log, "🟡 会心率+35%")
 
             if name == "甲斐弓" and side_units:
-                side_units[0]["active_rate_bonus"] = side_units[0].get("active_rate_bonus", 0) + 0.08
-                log_line_safe(log, "🎯 先頭武将 能動発動率+8%")
+
+    for idx, ally in enumerate(side_units):
+
+        if idx == 0:
+            ally["active_rate_bonus"] = ally.get("active_rate_bonus", 0) + 0.12
+            log_line_safe(log, f"🎯 {ally['name']} 能動発動率+12%")
+        else:
+            ally["active_rate_bonus"] = ally.get("active_rate_bonus", 0) + 0.08
+            log_line_safe(log, f"🎯 {ally['name']} 能動発動率+8%")
 
 def simulate_battle(a_units,b_units,max_turns=8,seed=None,cfg=None,meta=None):
     if seed is not None: random.seed(seed)
