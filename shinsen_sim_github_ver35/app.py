@@ -732,8 +732,6 @@ def normal_attack(actor, allies, enemies, log, cfg):
                     else:
                         log.event("🟣", actor["name"], f"『{sk['name']}』は効果付与型のため自動ダメージなし")
 
-apply_troop_skills(a, meta.get("a_troop_type", "騎兵"), log, "A")
-apply_troop_skills(b, meta.get("b_troop_type", "騎兵"), log, "B")
 def apply_passive_and_command_skills(units, log):
     for u in units:
         for sk in u["skills"]:
