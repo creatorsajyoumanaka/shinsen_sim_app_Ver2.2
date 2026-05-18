@@ -1214,7 +1214,9 @@ def select_item(label, items, key, placeholder="名前で検索"):
     options = []
 
     for i, x in enumerate(filtered):
+
     name = x.get("name", "名称不明")
+
     category = (
         x.get("category")
         or x.get("source_type")
@@ -1223,8 +1225,8 @@ def select_item(label, items, key, placeholder="名前で検索"):
         or x.get("skill_type")
         or ""
     )
-        options.append(f"{name} [{category}] #{i}")
 
+    options.append(f"{name} [{category}] #{i}")
     if not options:
         st.warning(f"{label}データがありません。dataフォルダを確認してください。")
         return None
