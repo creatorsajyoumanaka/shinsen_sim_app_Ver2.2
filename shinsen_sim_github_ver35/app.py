@@ -1310,9 +1310,9 @@ def unit_ui(side, idx):
 
         used_bonus = sum(bonus.values())
         st.caption(f"使用済み：{used_bonus} / {limit}　残り：{limit - used_bonus}")
-        non_unique_skills = [
+            non_unique_skills = [
         s for s in SKILLS
-        if s.get("source_type") != "固有"
+        if s.get("source_type") in ["伝授", "事件"]
     ]
     s1 = select_item(f"{side} 戦法1", SKILLS, f"{prefix}_s1", "例：紅蓮の炎、会盟の陣")
     s2 = select_item(f"{side} 戦法2", SKILLS, f"{prefix}_s2", "例：千軍辟易、草木皆兵")
