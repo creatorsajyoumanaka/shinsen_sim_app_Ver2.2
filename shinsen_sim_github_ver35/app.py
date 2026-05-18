@@ -1310,7 +1310,7 @@ def unit_ui(side, idx):
 
         used_bonus = sum(bonus.values())
         st.caption(f"使用済み：{used_bonus} / {limit}　残り：{limit - used_bonus}")
-            non_unique_skills = [
+    non_unique_skills = [
         s for s in SKILLS
         if s.get("source_type") in ["伝授", "事件"]
     ]
