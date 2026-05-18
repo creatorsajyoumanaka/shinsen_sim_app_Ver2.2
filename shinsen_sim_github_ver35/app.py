@@ -1145,13 +1145,37 @@ def simulate_battle(a_units,b_units,max_turns=8,seed=None,cfg=None,meta=None):
 
 def select_item(label, items, key, placeholder="名前で検索"):
     kw = st.text_input(f"{label} 検索", key=f"{key}_search", placeholder=placeholder)
-    filtered = [x for x in items if kw in str(x.get("name",""))] if kw else items
-    if kw and not filtered: st.caption("該当なし。全件表示に戻しています。"); filtered = items
-    names = [x.get("name","名称不明") for x in filtered]
-    if not names: st.warning(f"{label}データがありません。dataフォルダを確認してください。"); return None
-    selected = st.selectbox(label, names, key=f"{key}_select")
-    return next((x for x in filtered if x.get("name","名称不明") == selected), None)
 
+    filtered = [x for x in items if kw in str(x.get("name",""))] if kw else items
+
+    if kw and not filtered:
+        st.caption("該当なし。全件表示に戻しています。")
+        filtered = items
+
+    options = []
+
+    for i, x in enumerate(filtered):
+        name = x.get("name", "名称不明")
+        category = (
+            x.get("category")
+            or x.get("source")
+            or x.get("type")
+            or x.get("skill_type")
+            or ""
+        )
+
+        options.append(f"{name} [{category}] #{i}")
+
+    if not options:
+        st.warning(f"{label}データがありません。dataフォルダを確認してください。")
+        return None
+
+    selected = st.selectbox(label, options, key=f"{key}_select")
+
+    idx = int(selected.split("#")[-1])
+
+    return filtered[idx]
+    
 def unit_ui(side, idx):
     prefix = f"{side}_{idx}"; st.markdown(f"### {side} 武将{idx}")
     g = select_item(f"{side} 武将{idx}", GENERALS, f"{prefix}_g", "例：お市、真田昌幸")
