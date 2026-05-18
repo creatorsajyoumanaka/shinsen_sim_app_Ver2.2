@@ -289,7 +289,7 @@ def normalize_skill(raw):
 
     target_info = infer_target_info(effect, target_text)
 
-    return {
+      return {
         **raw,
         "skill_id": raw.get("skill_id") or raw.get("id") or raw.get("戦法ID") or name,
         "name": name,
@@ -299,6 +299,10 @@ def normalize_skill(raw):
         "target_info": target_info,
         "sim": build_sim_from_text(effect, target_info),
     }
+
+SKILLS = [normalize_skill(s) for s in SKILLS_RAW]
+SKILL_BY_ID = {s.get("skill_id"): s for s in SKILLS if s.get("skill_id")}
+SKILL_BY_NAME = {s.get("name"): s for s in SKILLS if s.get("name")}
 def normalize_traits(raw):
     if isinstance(raw, dict):
         return raw
