@@ -289,7 +289,38 @@ def normalize_skill(raw):
 
     target_info = infer_target_info(effect, target_text)
 
-      return {
+def normalize_skill(raw):
+    if not isinstance(raw, dict):
+        return {}
+
+    name = (
+        raw.get("name")
+        or raw.get("skill_name")
+        or raw.get("戦法名")
+        or raw.get("名称")
+        or raw.get("技能名")
+        or "名称不明"
+    )
+
+    effect = (
+        raw.get("effect")
+        or raw.get("effects_text")
+        or raw.get("戦法詳細")
+        or raw.get("detail")
+        or raw.get("説明")
+        or ""
+    )
+
+    proc = parse_percent(raw.get("proc", raw.get("rate", raw.get("発動確率", None))))
+
+    if proc is None:
+        proc = parse_proc_from_text(effect)
+
+    target_text = raw.get("target") or raw.get("対象種別") or raw.get("target_type") or ""
+
+    target_info = infer_target_info(effect, target_text)
+
+    return {
         **raw,
         "skill_id": raw.get("skill_id") or raw.get("id") or raw.get("戦法ID") or name,
         "name": name,
@@ -302,7 +333,7 @@ def normalize_skill(raw):
 
 SKILLS = [normalize_skill(s) for s in SKILLS_RAW]
 SKILL_BY_ID = {s.get("skill_id"): s for s in SKILLS if s.get("skill_id")}
-SKILL_BY_NAME = {s.get("name"): s for s in SKILLS if s.get("name")}
+SKILL_BY_NAME = {s.get("name"): s for s in SKILLS if s.get("name")}    
 def normalize_traits(raw):
     if isinstance(raw, dict):
         return raw
