@@ -1205,18 +1205,16 @@ def simulate_battle(a_units,b_units,max_turns=8,seed=None,cfg=None,meta=None):
 def select_item(label, items, key, placeholder="名前で検索"):
     kw = st.text_input(f"{label} 検索", key=f"{key}_search", placeholder=placeholder)
 
-    filtered = [x for x in items if kw in str(x.get("name",""))] if kw else items
+    filtered = [x for x in items if kw in str(x.get("name", ""))] if kw else items
 
     if kw and not filtered:
         st.caption("該当なし。全件表示に戻しています。")
         filtered = items
 
-        options = []
+    options = []
 
     for i, x in enumerate(filtered):
-
         name = x.get("name", "名称不明")
-
         category = (
             x.get("category")
             or x.get("source_type")
@@ -1225,8 +1223,8 @@ def select_item(label, items, key, placeholder="名前で検索"):
             or x.get("skill_type")
             or ""
         )
-
         options.append(f"{name} [{category}] #{i}")
+
     if not options:
         st.warning(f"{label}データがありません。dataフォルダを確認してください。")
         return None
@@ -1234,7 +1232,6 @@ def select_item(label, items, key, placeholder="名前で検索"):
     selected = st.selectbox(label, options, key=f"{key}_select")
 
     idx = int(selected.split("#")[-1])
-
     return filtered[idx]
     
 def unit_ui(side, idx):
