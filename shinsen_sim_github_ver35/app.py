@@ -1214,15 +1214,15 @@ def select_item(label, items, key, placeholder="名前で検索"):
     options = []
 
     for i, x in enumerate(filtered):
-        name = x.get("name", "名称不明")
-        category = (
-            x.get("category")
-            or x.get("source")
-            or x.get("type")
-            or x.get("skill_type")
-            or ""
-        )
-
+    name = x.get("name", "名称不明")
+    category = (
+        x.get("category")
+        or x.get("source_type")
+        or x.get("source")
+        or x.get("type")
+        or x.get("skill_type")
+        or ""
+    )
         options.append(f"{name} [{category}] #{i}")
 
     if not options:
