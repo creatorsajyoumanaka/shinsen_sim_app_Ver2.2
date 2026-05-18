@@ -32,7 +32,16 @@ def load_json_candidates(names):
     return []
 
 GENERALS = load_json_candidates(["generals_master.json", "generals.json", "units.json"])
-SKILLS_RAW = load_json_candidates(["skills_master.json", "skills.json", "unique_skills_master.json", "skill_master.json"])
+SKILLS_RAW = []
+
+for file_name in [
+    "skills_master.json",
+    "skills.json",
+    "unique_skills_master.json",
+    "skill_master.json",
+]:
+    SKILLS_RAW.extend(load_json_candidates([file_name]))
+
 TRAITS_RAW = load_json_candidates(["traits_master.json", "limit_breaks.json"])
 
 def parse_percent(v):
