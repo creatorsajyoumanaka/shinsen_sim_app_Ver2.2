@@ -26,7 +26,9 @@ Codexは最初に以下を全て読む。
 - `docs/CODEX_PHASE2_PERSISTENCE_GACHA.md`
 - `docs/BATTLE_LOSS_GRAPH_SPEC.md`
 - `docs/MASTER_DATA_AND_COMMUNITY_SHARING.md`
-- Issue #1〜#5
+- `docs/MASTER_ADMIN_ACCESS.md`
+- `docs/BRANDING_AND_ADS.md`
+- Issue #1〜#6
 
 その後、原則としてユーザー確認待ちで停止せず、明確な実装判断は自律的に行い、以下を順番に連続実装する。
 
@@ -97,7 +99,51 @@ Next.js + TypeScript + App Router。
 - S1〜S4フィルタ
 - grid/list切替
 
+## 武将画像の取得・管理
+
+武将画像は `public/characters/` 等のローカル配信領域へ保存し、masterのstable IDから参照する。
+外部URLを本番UIから直接ホットリンクしない。
+
+サイト管理者が利用可能と判断したソースから画像を取り込める**管理者専用import workflow**を用意する。
+初期候補には管理者指定の攻略ページ（例: こどもん系ページ）を含められる構造にするが、ソースURLはコード内の固定スクレイピング依存ではなくallowlist/configで管理する。
+
+推奨:
+- `scripts/import_character_images.*`
+- `config/image_sources.*`
+- dry-run
+- source allowlist
+- rate limit
+- retry
+- duplicate/hash check
+- file-name normalization
+- WebP等への最適化（可能な範囲）
+- `generalId -> local image path` mapping
+- `sourceUrl`
+- `sourceName`
+- `checkedAt`
+- `importedAt`
+
+画像importは管理者のみが実行する。
+一般ユーザーに画像import/uploadで公式masterを書き換える権限を与えない。
+
+画像取得に失敗した武将はplaceholderのまま残し、ビルドや武将DB全体を失敗させない。
+画像の差し替えでgeneral stable IDを変更しない。
+
 ここで停止せず永続化へ進む。
+
+---
+
+# Phase 2.25 — Branding / Creator Credit / Ads
+
+- 右上ヘッダーに小さく `制作：沙条愛歌` または `Created by 沙条愛歌`
+- creator名は `siteConfig` 等から変更可能
+- ページ下部に控えめな `AdSlot` を1つ用意
+- スマホBottom Navigationとは重ねない
+- fixed広告で操作を妨害しない
+- 広告OFF時は空白を残さない
+- provider未設定でもbuild/runtimeを壊さない
+- envで広告ON/OFF可能
+- 将来AdSense等へ差し替え可能なprovider abstraction
 
 ---
 
@@ -164,6 +210,7 @@ IndexedDB:
 - missing reference detection
 - 新武将/新戦法追加でUIコード変更不要
 - master更新でユーザーデータ保持
+- master writeは管理者のみ
 
 編成共有:
 - URL/共有コード
@@ -218,11 +265,15 @@ UIだけ完成して戦闘がダミーの状態を禁止。
 - build
 - 主要ページのレスポンシブ確認
 - 画像欠損耐性
+- 画像import dry-run確認
 - IndexedDB migration確認
 - import/export確認
 - 保存編成確認
 - ガチャ履歴確認
 - 兵損グラフ確認
+- creator credit確認
+- AdSlot確認
+- master admin制限確認
 - 旧Streamlit版が残っていること確認
 
 READMEを更新する。
@@ -234,10 +285,13 @@ READMEを更新する。
 以下の場合のみ止まってよい。
 
 1. 既存データを破壊する可能性が高い
-2. 権利不明の画像を勝手に大量取得する必要がある
+2. 管理者指定/allowlist外の権利不明画像を大量取得する必要がある
 3. 公式仕様と実測が矛盾し、勝手な確定が危険
 4. ビルド/テスト失敗が解消できず追加情報が必要
 5. GitHub権限/環境上の問題で継続不能
+6. 認証情報や管理者secretが必要
+
+管理者が明示的に指定した画像ソースについては、ホットリンクではなくローカルimport用の安全な取得パイプラインを実装してよい。
 
 それ以外は、TODOだけ残して停止せず、可能な範囲を先へ進める。
 
@@ -252,6 +306,7 @@ READMEを更新する。
 - engine: isolate opening phase
 - web: add app shell and navigation
 - data: add general search and season filters
+- images: add admin image import pipeline
 - storage: add IndexedDB repositories
 - gacha: add history and pity tracking
 - charts: add battle snapshot and troop-loss graph
@@ -266,6 +321,9 @@ READMEを更新する。
 - S1〜S4武将監査完了
 - 新武将追加が簡単
 - 画像付き武将検索
+- 管理者指定ソースから武将画像をローカルimport可能
+- 画像欠損時placeholder
+- 一般ユーザーはmaster/画像masterを変更不可
 - 編成保存
 - 所持管理
 - ガチャ履歴
@@ -275,6 +333,8 @@ READMEを更新する。
 - 1/100/1000回シミュレーション
 - 兵損/回復/残存兵力グラフ
 - URL編成共有
+- creator credit
+- 下部AdSlot
 - スマホ/PC対応
 - 旧Streamlit版保持
 - lint/typecheck/test/build成功
@@ -282,9 +342,10 @@ READMEを更新する。
 ## Codexへの実行文
 
 ```text
-CODEX_FULL_BUILD.md を最優先の統合指示として読み、Issue #1〜#5を1回の作業フローとして連続実装してください。
+CODEX_FULL_BUILD.md を最優先の統合指示として読み、Issue #1〜#6を1回の作業フローとして連続実装してください。
 途中で各Issueの完了報告だけして停止せず、次Phaseへ進んでください。
 ただし安全のためコミットはフェーズごとに分け、各段階でlint/typecheck/test/build等の実行可能な検証を行ってください。
 既存Streamlit版と既存master IDを壊さず、戦闘式の未確認値を公式確定値として扱わないでください。
+武将画像は管理者指定/allowlistソースからローカルimportできる管理者専用パイプラインを作り、本番UIでは外部ホットリンクしないでください。
 可能な限り最終Acceptance Criteriaまで一気に到達してください。
 ```
